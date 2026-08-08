@@ -278,6 +278,15 @@ pub struct ObservabilityConfig {
     /// Excess streams simply aren't captured. Only meaningful with
     /// `cache_sim_url`.
     pub cache_sim_max_concurrent_captures: usize,
+    /// Number of concurrent in-flight POSTs the cache-sim ingest tee's
+    /// background sender runs. The sender was single-task/serial, so tee
+    /// throughput was capped at ~`1 / POST-latency` (≈110 req/s at a ~9 ms
+    /// in-cluster POST); any sustained arrival above that filled the bounded
+    /// tee channel and dropped the excess
+    /// (`sgl_router_cache_sim_tee_total{result="dropped"}`), making the oracle
+    /// undercount vs the engine at peak. N concurrent POSTs raise the ceiling
+    /// to ~`N / POST-latency`. Only meaningful with `cache_sim_url`.
+    pub cache_sim_send_concurrency: usize,
 }
 
 /// Default concurrent-capture budget: 256 × 16 MiB = 4 GiB ceiling on aggregate
@@ -285,6 +294,16 @@ pub struct ObservabilityConfig {
 /// small next to any sane router memory limit.
 pub fn default_cache_sim_max_concurrent_captures() -> usize {
     256
+}
+
+/// Default concurrent-POST fan-out for the cache-sim ingest tee sender.
+/// 16 × (~1/9 ms in-cluster POST) ≈ ~1.7k req/s ceiling — comfortably above
+/// observed peak tee arrival, with headroom for growth. The POSTs hit one
+/// in-cluster Service that only enqueues (its own bounded queue is the next
+/// backstop), so a fan-out of 16 is cheap on both ends. 0 is clamped to 1 by
+/// the sender (serial), so it can never disable the drain.
+pub fn default_cache_sim_send_concurrency() -> usize {
+    16
 }
 
 /// `text` for human-readable dev output, `json` for one-line-per-record
@@ -309,6 +328,7 @@ impl Default for ObservabilityConfig {
             log_format: LogFormat::default(),
             cache_sim_url: None,
             cache_sim_max_concurrent_captures: default_cache_sim_max_concurrent_captures(),
+            cache_sim_send_concurrency: default_cache_sim_send_concurrency(),
         }
     }
 }
